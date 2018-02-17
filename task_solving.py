@@ -18,22 +18,19 @@ from sklearn.model_selection import cross_val_score, GridSearchCV
 from sklearn.svm import LinearSVC
 from sklearn.neural_network import MLPClassifier
 
-def week1(documents):
-    n_total = len(documents)
+def week1(X, y):
+    n_total = len(X)
     # #1
     helper.out('1-1.txt', n_total)
     print str(n_total) + ' reviews in total'
 
     # #2
-    n_pos = len([d for d in documents if d[1] == 1])
+    n_pos = len(filter(lambda d: d == 1, y))
     helper.out('1-2.txt', n_pos/float(n_total))
     print str(n_pos/float(n_total)) + ' of positive reviews'
 
-    data = [' '.join(d[0]) for d in documents]
-    target = [d[1] for d in documents]
-
     vectorizer = CountVectorizer()
-    doc_term = vectorizer.fit_transform(data)
+    doc_term = vectorizer.fit_transform(X)
 
     # #3
     helper.out('3.txt', doc_term.shape[1])
@@ -44,20 +41,20 @@ def week1(documents):
     pipe_logreg = Pipeline([('CountVectorizer', vectorizer), \
                             ('LogisticRegression', classifier)])
 
-    accuracy_scores = validate(pipe_logreg, data, target)
+    accuracy_scores = validate(pipe_logreg, X, y)
 
     # #4
     print('Mean accuracy: %f' % accuracy_scores.mean())
     helper.out('4.txt', accuracy_scores.mean())
 
-    roc_auc_scores = validate(pipe_logreg, data, target, scoring='roc_auc')
+    roc_auc_scores = validate(pipe_logreg, X, y, scoring='roc_auc')
 
     # #5
     print('Mean roc_auc_score: %f' % roc_auc_scores.mean())
     helper.out('5.txt', roc_auc_scores.mean())
 
 
-    classifier.fit(doc_term, target)
+    classifier.fit(doc_term, y)
     features = vectorizer.get_feature_names()
     # print 'Features (%i): ' % len(features)
     #print features
@@ -117,7 +114,7 @@ def week2(X, y):
 
     # #4
     stop_words_dict = {
-        'nltk stop-words': nltk.corpus.stopwords.words('english')[0],
+        'nltk stop-words': nltk.corpus.stopwords.words('english'),
         'sklearn stop-words': 'english'
     }
     scores = estimate_stop_words(stop_words_dict, classifier, X, y)

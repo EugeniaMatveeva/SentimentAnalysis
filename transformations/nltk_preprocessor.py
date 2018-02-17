@@ -38,20 +38,22 @@ class NLTKPreprocessor(BaseEstimator, TransformerMixin):
     """
     _corpus = defaultdict(str)
 
-    def __init__(self, stopwords=None, punct=None, lower=True, strip=True, add_PosNeg=True, replace_SynSet=True):
+    def __init__(self, stopwords=set(sw.words('english')), punct=set(string.punctuation), lower=True, strip=True, add_PosNeg=True, replace_SynSet=True, filter_token=True):
         """
         Instantiates the preprocessor, which make load corpora, models, or do
         other time-intenstive NLTK data loading.
         """
         self.lower      = lower
         self.strip      = strip
-        self.stopwords  = set(stopwords) if stopwords else set(sw.words('english'))
-        self.punct      = set(punct) if punct else set(string.punctuation)
+        self.stopwords  = stopwords
+        self.punct      = punct
         self.lemmatizer = WordNetLemmatizer()
-        self.addPosNeg = add_PosNeg
+        self.add_PosNeg = add_PosNeg
         if add_PosNeg:
             self.inquirer_lex = InquirerLexTransform()
-        self.replaceSynSet = replace_SynSet
+        self.replace_SynSet = replace_SynSet
+        self.filter_token = filter_token
+        self.include_words = {'no'}
 
     def fit(self, X, y=None):
         """
@@ -71,8 +73,8 @@ class NLTKPreprocessor(BaseEstimator, TransformerMixin):
         """
         X_tokens = []
         for doc in X:
-            tokens = list(self.tokenize(self.cut_alien_text(doc)))
-            if self.addPosNeg:
+            tokens = list(self.tokenize(self.preprocess(doc)))
+            if self.add_PosNeg:
                 tokens += list(self.inquirer_lex._get_sentiment(tokens))
             X_tokens.append(tokens)
         return X_tokens
@@ -97,15 +99,20 @@ class NLTKPreprocessor(BaseEstimator, TransformerMixin):
 
                 # If punctuation or stopword, ignore token and continue
                 # Leave only nouns, adverbs and adjectives
-                if token in self.stopwords or all(char in self.punct for char in token) or len(token) <= 2 or not self.filter_tag(tag, token):
+                if (self.stopwords and token in self.stopwords) \
+                        or (self.punct and all(char in self.punct for char in token)) \
+                        or (len(token) < 2 and self.punct and not all(char in self.punct for char in token)) \
+                        or (self.filter_token and not self.filter_tag(tag, token))\
+                        and token not in self.include_words:
                     continue
 
                 # Lemmatize the token and yield
                 lemma = self.lemmatize(token, tag)
-                if self.replaceSynSet:
+                if self.replace_SynSet:
                     # replace with synonyms from corpus if exist
                     yield self.add_to_corpus(lemma, tag)
-                yield lemma
+                else:
+                    yield lemma
 
     def filter_tag(self, tag, token):
         if (tag[:2] in ('NN', 'JJ', 'RB', 'VB')):
@@ -148,11 +155,11 @@ class NLTKPreprocessor(BaseEstimator, TransformerMixin):
         }.get(tag[0], wn.NOUN)
 
     @staticmethod
-    def cut_alien_text(sent):
-        alien_text = 'the flying inkpot rating system'
-        if alien_text in sent:
-            return sent[:sent.find(alien_text)]
-        return sent
+    def preprocess(sent):
+        # alien_text = 'the flying inkpot rating system'
+        # if alien_text in sent:
+        #     return sent[:sent.find(alien_text)]
+        return sent.replace(" '", "").replace("'", "")
 
     @staticmethod
     def get_syns(w, tag):

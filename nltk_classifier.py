@@ -1,6 +1,6 @@
 import helper
 
-import random
+import random, string
 import nltk
 from nltk.corpus import movie_reviews
 from sklearn.feature_extraction.text import CountVectorizer, TfidfVectorizer
@@ -8,13 +8,12 @@ from sklearn.feature_extraction.text import CountVectorizer, TfidfVectorizer
 
 class NltkClassifier():
 
-    def __init__(self, documents):
-        self._max_features = 2000
-
+    def __init__(self, documents, max_features=2000):
+        self._max_features = max_features
         self._documents = documents
-        words = [w for doc, _ in documents for w in doc]
-        self._all_words = nltk.FreqDist(w.lower() for w in words)
-        data = [' '.join(d[0]) for d in documents]
+        words = set([w for doc, _ in documents for w in nltk.word_tokenize(doc)]) - set(nltk.corpus.stopwords.words('english')) - set(string.punctuation)
+        self._all_words = nltk.FreqDist(w.lower() for w in words if len(w) >= 2)
+        data = [d[0] for d in documents]
         self._count_vectorizer = CountVectorizer(min_df=2, ngram_range=(1, 2), max_features=self._max_features)
         self._count_matrix = self._count_vectorizer.fit_transform(data)
         self._tfidf_vectorizer = TfidfVectorizer(min_df=2, ngram_range=(1, 2), max_features=self._max_features)
@@ -60,15 +59,15 @@ class NltkClassifier():
 
     def test_classifier(self):
         random.shuffle(self._documents)
-        featuresets = [(self.count_features(d), c) for (d, c) in self._documents]
+        featuresets = [(self.contain_features(d), c) for (d, c) in self._documents]
         train_set, test_set = featuresets[100:], featuresets[:100]
         acc = self.fit(train_set, test_set)
-        helper.save_accuracy('NaiveBayesClassifier, bit contains feature array', acc)
+        helper.log_results('NaiveBayesClassifier, bit contains feature array', acc)
         print(acc)
         self._classifier.show_most_informative_features(10)
 
-        # test_data = self._documents[:100]
-        # errors = self.get_errors(test_data)
-        # for (tag, guess, doc) in errors[:10]:
-        #     print "a=%i: y=%i, x=%s" % (tag, guess, " ".join(doc))
+        test_data = self._documents[:100]
+        errors = self.get_errors(test_data)
+        for (tag, guess, doc) in errors[:10]:
+            print "a=%i: y=%i, x=%s" % (tag, guess, " ".join(doc))
 

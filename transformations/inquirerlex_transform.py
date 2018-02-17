@@ -44,16 +44,18 @@ class InquirerLexTransform():
         given to the input words by the Hardvard Inquirer lexicon.
         """
         newlist = [
-            list(self._get_sentiment(bag)) for bag in X
+            list(self._get_sentiment(str)) for str in X
         ]
         return newlist
 
-    def _get_sentiment(self, bag):
+    def _get_sentiment(self, str):
         corpus = self._get_corpus()
-        for word in bag:
-            newword = corpus.get(word.lower(), "")
-            if newword != "":
-                yield newword
+        for i in range(len(str)-1):
+            prev = str[i].lower()
+            word = str[i + 1].lower()
+            sent = corpus.get(word.lower(), "")
+            if sent != "":
+                yield sent
 
     def _get_corpus(self):
         """
@@ -71,7 +73,7 @@ class InquirerLexTransform():
                     for i in self._use_fields:
                         name, x = FIELDS[i], entry[i]
                         if x:
-                            xs.append("{}_{}".format(name, x))
+                            xs.append("{}_{}".format(name[0], x[0]))
                     name = entry.Entry.lower()
                     if "#" in name:
                         name = name[:name.index("#")]

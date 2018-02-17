@@ -11,12 +11,13 @@ from helper import *
 from parameter_tuning import evaluate, grid_search
 from transformations.nltk_preprocessor import NLTKPreprocessor
 from transformations.inquirerlex_transform import InquirerLexTransform
+from vader_analyzer import SentimentAnalyzer
 
 now = datetime.datetime.now()
 
 class Evaluator:
 
-    def __init__(self, preprocessor=None, vectorizer=None, use_inqlex=False, load_path=None):
+    def __init__(self, model_type, preprocessor=None, vectorizer=None, use_inqlex=False, use_vader=False, load_path=None):
         if load_path is not None:
             self.load_data_transformation(load_path)
             self.model_is_fit = True
@@ -24,7 +25,7 @@ class Evaluator:
             self.model_is_fit = False
             self.preprocessor = preprocessor or NLTKPreprocessor()
             self.vectorizer = vectorizer or TfidfVectorizer(tokenizer=identity, preprocessor=None, lowercase=False, ngram_range=(1,2), min_df=2)
-        self.use_lex = use_inqlex
+        self.model_type = model_type
 
     def get_step(self, step_name):
         return self.model.named_steps[filter(lambda nm: step_name in nm, self.model.named_steps)[0]]
@@ -32,9 +33,9 @@ class Evaluator:
     def prepare_data_transformation(self, X, y, save_path=None):
         X_prep = self.preprocessor.fit_transform(X, y)
         X_vect = self.vectorizer.fit_transform(X_prep, y)
-        self.save(X_vect, save_path + '_dt_matrix')
-        self.save(self.preprocessor, save_path + '_preprocessor')
-        self.save(self.vectorizer, save_path + '_vectorizer')
+        save(X_vect, save_path + '_dt_matrix')
+        save(self.preprocessor, save_path + '_preprocessor')
+        save(self.vectorizer, save_path + '_vectorizer')
 
     def load_data_transformation(self, load_path):
         self.preprocessor = self.load(load_path + '_preprocessor')
@@ -42,9 +43,9 @@ class Evaluator:
         self.dt_matrix = self.load(load_path + '_dt_matrix')
 
     def test_classifier(self, classifier, classifier_name, X, y, test_split=0, show_features=False, show_errors=False):
-        # Label encode the targets
         self.labels = LabelEncoder()
         y = self.labels.fit_transform(y)
+        self.classifier = classifier
 
         print("Evaluation model fit")
         if test_split > 0:
@@ -55,7 +56,7 @@ class Evaluator:
             y_pred, score = self.evaluate_on_test_split(X_test, y_test)
 
             if show_features and hasattr(classifier, 'coef_'):
-                print(self.show_model_output())
+                print(self.show_model_features())
             if show_errors:
                 self.show_error_predictions(y_pred, X_test, y_test)
         else:
@@ -63,8 +64,18 @@ class Evaluator:
             score = self.evaluate_on_cross_val(X, y, classifier, classifier_name)
         log_pipeline_results(self.model, score)
 
-    def build_model(self, classifier, classifier_name):
-        if self.use_lex:
+
+    def get_predictions(self, classifier, X_train, y_train, X_test):
+        self.labels = LabelEncoder()
+        y_train = self.labels.fit_transform(y_train)
+        self.build_model(classifier)
+        self.fit_model(X_train, y_train)
+        y_pred = self.model.predict(X_test)
+        return y_pred
+
+    def build_model(self, classifier, classifier_name=None):
+        self.classifier = classifier
+        if self.model_type == 'use_lex':
             vectorizer_name = type(self.vectorizer).__name__ + '+InquirerLexTransform'
             lex_vectorizer = TfidfVectorizer(tokenizer=identity, preprocessor=None, lowercase=False)
             pipeline2 = make_pipeline(InquirerLexTransform(), lex_vectorizer)
@@ -74,7 +85,27 @@ class Evaluator:
                 ('preprocessor:' + type(self.preprocessor).__name__, self.preprocessor),
                 ('vectorizer:' + vectorizer_name, self.vectorizer),
                 ('normalizer:', Normalizer()),
-                ('classifier:' + classifier_name or type(classifier).__name__, classifier),
+                ('classifier:' + (classifier_name or type(classifier).__name__), classifier),
+            ])
+        elif self.model_type == 'use_vader':
+            vectorizer_name = type(self.vectorizer).__name__ + '+SentimentAnalyzer'
+            sent_vectorizer = SentimentAnalyzer()
+            pipeline1 = make_pipeline(self.vectorizer)
+            ext = [pipeline1, sent_vectorizer]
+            self.vectorizer = make_union(*ext)
+            self.model = Pipeline([
+                ('vectorizer:' + vectorizer_name, self.vectorizer),
+                ('classifier:' + (classifier_name or type(classifier).__name__), classifier),
+            ])
+        elif self.model_type == 'use_nltk_vader':
+            vectorizer_name = type(self.vectorizer).__name__ + '+SentimentAnalyzer'
+            sent_vectorizer = SentimentAnalyzer()
+            pipeline1 = make_pipeline(self.preprocessor, self.vectorizer)
+            ext = [pipeline1, sent_vectorizer]
+            self.vectorizer = make_union(*ext)
+            self.model = Pipeline([
+                ('vectorizer:' + vectorizer_name, self.vectorizer),
+                ('classifier:' + (classifier_name or type(classifier).__name__), classifier),
             ])
         else:
             self.model = Pipeline([
@@ -85,10 +116,9 @@ class Evaluator:
 
     def fit_model(self, X, y):
         if self.model_is_fit:
-            self.get_step('classifier').fit(self.dt_matrix, y)
+            self.classifier.fit(self.dt_matrix, y)
         else:
             self.model.fit(X, y)
-        self.model.labels_ = self.labels
 
     def evaluate_on_cross_val(self, X, y, classifier, classifier_name=None):
         score = evaluate(self.model, X, y, 3)
@@ -98,31 +128,21 @@ class Evaluator:
     def evaluate_on_test_split(self, X_test, y_test, verbose=True):
         if verbose:
             print("Classification Report:\n")
-
         y_pred = self.model.predict(X_test)
         print(clsr(y_test, y_pred))
         score = accuracy_score(y_test, y_pred)
         return y_pred, score
 
-    def choose_classifier_parameters(self, classifier, classifier_name, X, y, params_grid):
-        self.build_model(classifier, classifier_name)
-        res = grid_search(self.model, params_grid, X, y)
+    def choose_model_parameters(self, pipeline, params_grid, X, y):
+        res = grid_search(pipeline, params_grid, X, y)
         print ('Best params: ', res.best_params_)
         print 'Best score: %f' % res.best_score_
         return res
 
-
     def save_model(self, save_path, steps):
         for s in steps:
-            self.save(self.get_step(s), save_path + '_' + s)
+            save(self.get_step(s), save_path + '_' + s)
 
-    def save(self, obj, path):
-        with open(path, 'wb') as f:
-            pickle.dump(obj, f)
-
-    def load(self, path):
-        with open(path, 'rb') as f:
-            return pickle.load(f)
 
     def get_feature_vectors(self, text):
         # Extract the vectorizer and the classifier from the pipeline
@@ -143,15 +163,14 @@ class Evaluator:
             tvec = vectorizer.transform(tprep).toarray()
         else:
             # Otherwise simply use the coefficients
+            tprep = None
             tvec = classifier.coef_
         return tprep, tvec
 
     def show_model_output(self, text=None, y=None):
         tprep, tvec = self.get_feature_vectors(text)
-
         # Create the output string to return
         output = []
-
         # If text, add the predicted value to the output.
         if text is not None:
             output.append("\"{}\"".format(text))
